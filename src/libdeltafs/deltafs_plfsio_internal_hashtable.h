@@ -61,6 +61,7 @@ public:
   bool Add(const Slice& key, const Slice& value);
   // need to change from string to Slice
   std::string Get(std::string key, int& k);
+  Iterator* NewIterator() const;
   void Finish(bool skip_sort = false);
   void Reset();
 
@@ -84,6 +85,8 @@ private:
   // No copying allowed
   void operator=(const HashWriteBuffer&);
   HashWriteBuffer(const HashWriteBuffer&);
+
+  class Iter;
 };
 
 
