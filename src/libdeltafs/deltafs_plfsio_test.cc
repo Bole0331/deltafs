@@ -115,6 +115,31 @@ TEST(HashWriteBufferTest, Correctness) {
   fprintf(stdout,"Average read block %f time\n",getAveragRead(sum));
 }
 
+TEST(HashWriteBufferTest, Iterator) {
+  int num = 0;
+  while(true) {
+    std::string key;
+    std::string num2s = std::to_string(num);
+    key.resize(options_.key_size,'0');
+    key.replace(options_.key_size-num2s.length(),num2s.length(),num2s);
+    if ( !Add(key) ) break;
+    num += 1;
+  }
+  Finish();
+  Iterator* const iter = buffer_->NewIterator();
+  iter->SeekToFirst();
+  num = 0;
+  for (; iter->Valid(); iter->Next()) {
+    Slice key = iter->key();
+    Slice value = iter->value();
+    std::string s_key = key.data();
+    std::string s_value = value.data();
+    assert(s_value == kv_[s_key]);
+    num += 1;
+  }
+  assert(num == getEntries());
+}
+
 TEST(HashWriteBufferTest, HashPerformance) {
   struct rusage usage;
   struct timeval tvs,tve;
