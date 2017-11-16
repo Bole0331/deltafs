@@ -11,6 +11,7 @@
 #include "deltafs_plfsio_events.h"
 #include "deltafs_plfsio_filter.h"
 #include "deltafs_plfsio_internal.h"
+#include "deltafs_plfsio_internal_hashtable.h"
 
 #include "pdlfs-common/histogram.h"
 #include "pdlfs-common/port.h"
@@ -34,6 +35,113 @@
 
 namespace pdlfs {
 namespace plfsio {
+
+double ToSecs(const struct timeval* tv) {
+    return tv->tv_sec + tv->tv_usec / 1000.0 / 1000.0;
+}
+
+class HashWriteBufferTest {
+ public:
+  explicit HashWriteBufferTest(uint32_t seed = 301) : rnd_(seed) {
+    buffer_ = new HashWriteBuffer(options_);
+    buffer_->Reserve(4 << 20);
+  }
+
+  ~HashWriteBufferTest() {
+    delete buffer_;
+  }
+
+  bool Add(std::string key) {
+    std::string value;
+    test::RandomString(&rnd_, options_.value_size, &value);
+    bool res = buffer_->Add(key,value);
+    if ( res ) kv_.insert(std::make_pair(key, value));
+    return res;
+  }
+
+  int Get(std::string key) {
+    int k;
+    std::string value = buffer_->Get(key,k);
+    if ( k == 0 || value != kv_[key] ) return 0;
+    return k;
+  }
+
+  void Finish() {
+    buffer_->Finish();
+  }
+
+  float getRealUtil() {
+    return buffer_->NumEntries() * buffer_->bytes_per_entry() * 1.0 / options_.data_buffer;
+  }
+
+  float getAveragRead(int k) {
+    return k * 1.0 / buffer_->NumEntries();
+  }
+
+  float getMemory() {
+    return buffer_->CurrentBufferSize() * 1.0 / 1024;
+  }
+
+  int getEntries() {
+    return buffer_->NumEntries();
+  }
+
+  std::map<std::string, std::string> kv_;  
+  HashWriteBuffer* buffer_;
+  HashOptions options_;
+  Random rnd_;
+};
+
+TEST(HashWriteBufferTest, Correctness) {
+  int num = 0;
+  while(true) {
+    std::string key;
+    std::string num2s = std::to_string(num);
+    key.resize(options_.key_size,'0');
+    key.replace(options_.key_size-num2s.length(),num2s.length(),num2s);
+    if ( getRealUtil() > 0.96 ) break;
+    if ( !Add(key) ) break;
+    num += 1;
+  }
+  fprintf(stdout,"Storage Utilization is: %f\n",getRealUtil());
+  int sum = 0;
+  std::map<std::string, std::string>::iterator iter = kv_.begin();
+  while(iter != kv_.end()) {
+    int res = Get(iter->first);
+    assert(res != 0);
+    sum += res;
+    iter++;
+  }
+  fprintf(stdout,"Average read block %f time\n",getAveragRead(sum));
+}
+
+TEST(HashWriteBufferTest, HashPerformance) {
+  struct rusage usage;
+  struct timeval tvs,tve;
+  gettimeofday(&tvs,NULL);
+  int r1 = getrusage(RUSAGE_SELF, &usage);
+  assert(r1 == 0);
+  double t1 = ToSecs(&usage.ru_utime) + ToSecs(&usage.ru_stime);
+  int num = 0;
+  while(true) {
+    std::string key;
+    std::string num2s = std::to_string(num);
+    key.resize(options_.key_size,'0');
+    key.replace(options_.key_size-num2s.length(),num2s.length(),num2s);
+    if ( getRealUtil() > 0.96 ) break;
+    if ( !Add(key) ) break;
+    num += 1;
+  }
+  Finish();
+  int r2 = getrusage(RUSAGE_SELF, &usage);
+  gettimeofday(&tve,NULL);
+  assert(r2 == 0);
+  double t2 = ToSecs(&usage.ru_utime) + ToSecs(&usage.ru_stime);
+  double span = tve.tv_sec-tvs.tv_sec + (tve.tv_usec-tvs.tv_usec)/1000000.0;
+  fprintf(stdout,"CPU: %f\n",t2-t1);
+  fprintf(stdout,"All Time: %f\n",span);
+  fprintf(stdout,"Number of entriyes: %d\n",getEntries());
+}
 
 template <size_t value_size = 32>
 class WriteBufTest {
@@ -88,6 +196,31 @@ class WriteBufTest {
   uint32_t num_entries_;
   Random rnd_;
 };
+
+TEST(WriteBufTest<>, Performance) {
+  struct rusage usage;
+  struct timeval tvs,tve;
+  gettimeofday(&tvs,NULL);
+  int r1 = getrusage(RUSAGE_SELF, &usage);
+  assert(r1 == 0);
+  double t1 = ToSecs(&usage.ru_utime) + ToSecs(&usage.ru_stime);
+  int num = 0;
+  while(true) {
+    if ( buf_->CurrentBufferSize() > 0.96 * (4 << 20) ) 
+      break;
+    Add(num);
+    num += 1;
+  }
+  buf_->Finish();
+  int r2 = getrusage(RUSAGE_SELF, &usage);
+  assert(r2 == 0);
+  gettimeofday(&tve,NULL);
+  double t2 = ToSecs(&usage.ru_utime) + ToSecs(&usage.ru_stime);
+  double span = tve.tv_sec-tvs.tv_sec + (tve.tv_usec-tvs.tv_usec)/1000000.0;
+  fprintf(stdout,"Time: %f\n",t2-t1);
+  fprintf(stdout,"All Time: %f\n",span);
+  fprintf(stdout,"Number of entriyes: %d\n",buf_->NumEntries());
+}
 
 TEST(WriteBufTest<>, FixedSizedValue) {
   Add(3);
