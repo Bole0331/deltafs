@@ -11,6 +11,7 @@
 #include "deltafs_plfsio_batch.h"
 #include "deltafs_plfsio_filter.h"
 #include "deltafs_plfsio_internal.h"
+#include "deltafs_plfsio_internal_hashtable.h"
 
 #include "pdlfs-common/env_files.h"
 #include "pdlfs-common/hash.h"
