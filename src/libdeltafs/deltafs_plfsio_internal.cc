@@ -326,7 +326,7 @@ template <typename T>
 void TableLogger::EndTable(T* filter_block, ChunkType filter_type) {
   assert(!finished_);  // Finish() has not been called
 
-  EndBlock();
+  EndBlock(); 
   if (!ok()) {
     return;
   } else if (pending_indx_entry_) {
@@ -536,7 +536,7 @@ void TableLogger::Add(const Slice& key, const Slice& value) {
   largest_key_ = key.ToString();
 
   // Add an index entry if there is one pending insertion
-  if (pending_indx_entry_) {
+  if (pending_indx_entry_) { // Bole: EndBlock set as true
     BytewiseComparator()->FindShortestSeparator(&last_key_, key);
     PutLengthPrefixedSlice(&uncommitted_indexes_, last_key_);
     pending_indx_handle_.EncodeTo(&uncommitted_indexes_);
@@ -545,15 +545,15 @@ void TableLogger::Add(const Slice& key, const Slice& value) {
   }
 
   // Commit buffered data and indexes
-  if (pending_commit_) {
-    Commit();
+  if (pending_commit_) { // Bole: Add set as true
+    Commit(); // Bole: default as 2MB
     if (!ok()) {
       return;
     }
   }
 
   // Restart the block buffer
-  if (pending_restart_) {
+  if (pending_restart_) { // Bole: Commit and EndBlock set as true
     pending_restart_ = false;
     data_block_.SwitchBuffer(
         NULL);  // Continue appending to the same underlying buffer

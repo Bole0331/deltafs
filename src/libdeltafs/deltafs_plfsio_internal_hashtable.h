@@ -89,6 +89,79 @@ private:
   class Iter;
 };
 
+// Write hash table contents into a pair of log files.
+class HashTableLogger {
+public:
+ HashTableLogger(const DirOptions& dir_options, const HashOptions& hash_options, LogSink* data, LogSink* indx);
+ ~HashTableLogger();
+
+ bool ok() const { return status_.ok(); }
+ Status status() const { return status_; }
+
+ void Add(const Slice& key, const Slice& value);
+
+ // Finish a 4MB (default) MemTable
+ // Force the start of a new table.
+ // Filter should be null for HashTableLogger
+ // REQUIRES: Finish() has not been called.
+ template <typename T>
+ void EndTable(T* filter, ChunkType filter_type);
+
+ // Force the start of a new epoch.
+ // REQUIRES: Finish() has not been called.
+ void MakeEpoch();
+
+ // Finalize table contents.
+ // No further writes.
+ Status Finish();
+
+private:
+ // Finish a 32KB (default) data block
+ // End the current block and force the start of a new data block.
+ // REQUIRES: Finish() has not been called.
+ void EndBlock();
+
+ // Flush buffered data blocks and finalize their indexes.
+ // REQUIRES: Finish() has not been called.
+ void Commit();
+
+ const DirOptions& dir_options_;
+ const HashOptions& hash_options_;
+
+ template <typename T>
+ friend class DirLogger;
+
+ // No copying allowed
+ void operator=(const HashTableLogger&);
+ HashTableLogger(const HashTableLogger&);
+
+ Status status_;
+ uint32_t num_uncommitted_indx_;  // Number of uncommitted index entries
+ uint32_t num_uncommitted_data_;  // Number of uncommitted data blocks
+ bool pending_restart_;           // Request to restart the data block buffer
+ bool pending_commit_;  // Request to commit buffered data and indexes
+ std::string data_block_;
+ std::string indx_block_;  // Locate the data blocks within a table
+ std::string meta_block_;  // Locate the tables within an epoch
+ std::string root_block_;  // Locate each epoch
+ bool pending_indx_entry_;
+ bool pending_meta_entry_;
+ bool pending_root_entry_;
+ uint32_t total_num_keys_;
+ uint32_t total_num_blocks_;
+ uint32_t total_num_tables_;
+ uint32_t num_tables_;  // Number of tables generated within the current epoch
+ uint32_t num_epochs_;  // Number of epochs generated
+ std::string uncommitted_indexes_;
+ uint64_t pending_data_flush_;  // Offset of the data pending flush
+ uint64_t pending_indx_flush_;  // Offset of the index pending flush
+ LogSink* data_sink_;
+ uint64_t data_offset_;  // Latest data offset
+ LogWriter indx_logger_;
+ LogSink* indx_sink_;
+ bool finished_;
+};
+
 
 }  // namespace plfsio
 }  // namespace pdlfs
