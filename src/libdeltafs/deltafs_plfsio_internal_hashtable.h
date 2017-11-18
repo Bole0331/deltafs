@@ -126,6 +126,8 @@ private:
  // REQUIRES: Finish() has not been called.
  void Commit();
 
+ void write8bytes(size_t info);
+
  const DirOptions& dir_options_;
  const HashOptions& hash_options_;
 
@@ -139,11 +141,8 @@ private:
  Status status_;
  std::string data_block_;
  std::vector<uint16_t> table_per_epoch_; 
- size_t bucket_size_;
- size_t key_size_;
- size_t value_size_;
  size_t dblock_per_table_;
- uint32_t total_num_epochs_;
+ size_t block_batch_size_;
  uint32_t total_num_blocks_;
  uint32_t total_num_tables_;
  uint32_t num_tables_;  // Number of tables generated within the current epoch

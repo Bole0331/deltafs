@@ -270,9 +270,65 @@ TableLogger::TableLogger(const DirOptions& dir_options, const HashOptions& hash_
     block_batch_size_ = dir_options_.block_batch_size / dir_options_.block_size;
     block_batch_size_ *= dir_options_.block_size;
   }
-
+  if ( block_batch_size_ == 0 ) 
+    block_batch_size_ = dir_options_.block_size;
+  
   // Allocate memory
   data_block_.reserve(block_batch_size_);
+
+  // write meta data into index file
+  write8bytes(hash_options_.bucket_size);
+  write8bytes(hash_options_.key_size);
+  write8bytes(hash_options_.value_size);
+  write8bytes(dblock_per_table_);
+}
+
+HashTableLogger::~HashTableLogger() {
+  indx_sink_->Unref();
+  data_sink_->Unref();
+}
+
+HashTableLogger::write8bytes(size_t info) {
+  std::string s_info;
+  s_info.resize(sizeof(size_t),'0');
+  std::string info2s = to_string(info);
+  s_info.replace(sizeof(size_t)-info2s.length(),info2s.length(),info2s);
+  status_ = indx_sink_->Lwrite(s_info);
+}
+
+void HashTableLogger::Add(const Slice& key, const Slice& value) {
+
+}
+
+template <typename T>
+void HashTableLogger::EndTable(T* filter_block, ChunkType filter_type) {
+
+}
+
+void HashTableLogger::MakeEpoch() {
+  assert(!finished_);  // Finish() has not been called
+  if (!ok()) {
+    return;  // Abort
+  } else if (num_epochs_ >= kMaxEpochNo) {
+    status_ = Status::AssertionFailed("Too many epochs");
+    return;
+  }
+  table_per_epoch_.push_back(num_tables_);
+  num_tables_ = 0;
+  num_epoches_ += 1;
+}
+
+Status HashTableLogger::Finish() {
+  assert(!finished_);  // Finish() has not been called
+  finished_ = true;
+  if (!ok()) return status_;
+  for (int i = 0; i < table_per_epoch_.size(); i++) {
+    write8bytes((size_t)(table_per_epoch_[i]));
+  }
+  write8bytes((size_t)num_epochs_);
+  table_per_epoch_.clear();
+  data_block_.clear();
+  return status_;
 }
 
 
