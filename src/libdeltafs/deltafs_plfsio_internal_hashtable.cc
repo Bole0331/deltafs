@@ -44,6 +44,7 @@ public:
   explicit Iter(const HashWriteBuffer* hash_write_buffer)
     : bucket_cursor_(-1),
       slot_cursor_(-1),
+      padding(false),
       entries_per_bucket_(&hash_write_buffer->entries_per_bucket_[0]),
       num_of_bucket_(hash_write_buffer->num_of_bucket_),
       slot_per_bucket_(hash_write_buffer->slot_per_bucket_),
@@ -54,10 +55,16 @@ public:
   virtual ~Iter() {}
 
   virtual void Next() { 
-    slot_cursor_ += 1;
-    if ( slot_cursor_ >= entries_per_bucket_[bucket_cursor_] ) {
+    if (padding) {
+      padding = false;
       slot_cursor_ = 0;
       bucket_cursor_ += 1;
+      return;
+    } 
+    if (slot_cursor_ >= entries_per_bucket_[bucket_cursor_]) {
+      if (entries_per_bucket_[bucket_cursor_] * (key_size_ + value_size_) < bucket_size_) {
+        padding = true;
+      }
     }
   }
 
@@ -72,6 +79,7 @@ public:
   virtual Status status() const { return Status::OK(); }
 
   virtual bool Valid() const { 
+    if ( padding ) return true;
     if ( bucket_cursor_ < 0 || bucket_cursor_ >= num_of_bucket_ ) 
       return false;
     return slot_cursor_ >= 0 && slot_cursor_ < entries_per_bucket_[bucket_cursor_];
@@ -93,21 +101,29 @@ public:
 
   virtual Slice key() const {
     assert(Valid());
+    if (padding) {
+      std::string key_;
+      key_.resize(1,'.');
+      return key_;
+    }
     uint32_t offset = bucket_cursor_ * slot_per_bucket_ * (key_size_ + value_size_);
     offset += slot_cursor_ * (key_size_ + value_size_);
     std::string key_ = buffer_.substr(offset,key_size_);
-    Slice result = key_;
-    return result;
+    return key_;
   }
 
   virtual Slice value() const {
     assert(Valid());
+    if (padding) {
+      std::string value_;
+      value.resize(bucket_size_ - entries_per_bucket_[bucket_cursor_] * (key_size_ + value_size_) - 1,'.');
+      return value_;
+    }
     uint32_t offset = bucket_cursor_ * slot_per_bucket_ * (key_size_ + value_size_);
     offset += slot_cursor_ * (key_size_ + value_size_);
     offset += key_size_;
     std::string value_ = buffer_.substr(offset,value_size_);
-    Slice result = value_;
-    return result;
+    return value_;
   }
 
 private:
@@ -118,8 +134,9 @@ private:
   uint16_t slot_per_bucket_;
   size_t key_size_;
   size_t value_size_;
+  bool padding;
   std::string buffer_;
-  };
+};
 
 Iterator* HashWriteBuffer::NewIterator() const {
   assert(finished_);
@@ -297,7 +314,76 @@ HashTableLogger::write8bytes(size_t info) {
 }
 
 void HashTableLogger::Add(const Slice& key, const Slice& value) {
+  assert(!finished_);       // Finish() has not been called
+  assert(key.size() != 0);  // Keys cannot be empty
+  if (!ok()) return;        // Abort
 
+  if (!last_key_.empty()) {
+    // Keys within a single table are inserted in a weakly sorted order
+    assert(key >= last_key_);
+    if (options_.mode == kUniqueDrop) {  // Auto deduplicate
+      if (key == last_key_) {
+        total_num_dropped_keys_++;
+        return;  // Drop
+      }
+    } else if (options_.mode != kMultiMap) {
+      assert(key != last_key_);  // Keys are strongly ordered, no duplicates
+    }
+  }
+  if (smallest_key_.empty()) {
+    smallest_key_ = key.ToString();
+  }
+  largest_key_ = key.ToString();
+
+  // Add an index entry if there is one pending insertion
+  if (pending_indx_entry_) { // Bole: EndBlock set as true
+    BytewiseComparator()->FindShortestSeparator(&last_key_, key);
+    PutLengthPrefixedSlice(&uncommitted_indexes_, last_key_);
+    pending_indx_handle_.EncodeTo(&uncommitted_indexes_);
+    pending_indx_entry_ = false;
+    num_uncommitted_indx_++;
+  }
+
+  // Commit buffered data and indexes
+  if (pending_commit_) { // Bole: Add set as true
+    Commit(); // Bole: default as 2MB
+    if (!ok()) {
+      return;
+    }
+  }
+
+  // Restart the block buffer
+  if (pending_restart_) { // Bole: Commit and EndBlock set as true
+    pending_restart_ = false;
+    data_block_.SwitchBuffer(
+        NULL);  // Continue appending to the same underlying buffer
+    // Pre-reserve enough space for the leading block handle
+    data_block_.Pad(BlockHandle::kMaxEncodedLength);
+    data_block_.Reset();
+  }
+
+  last_key_ = key.ToString();
+  output_stats_.value_size += value.size();
+  output_stats_.key_size += key.size();
+#ifndef NDEBUG
+  if (options_.mode == kUnique) {
+    assert(keys_.count(last_key_) == 0);
+    keys_.insert(last_key_);
+  }
+#endif
+
+  data_block_.Add(key, value);
+  total_num_keys_++;
+  if (data_block_.CurrentSizeEstimate() + kBlockTrailerSize +
+          BlockHandle::kMaxEncodedLength >=
+      static_cast<size_t>(options_.block_size * options_.block_util)) {
+    EndBlock();
+    // Schedule buffer commit if it is about to full
+    if (data_block_.buffer_store()->size() + options_.block_size >
+        options_.block_batch_size) {
+      pending_commit_ = true;
+    }
+  }
 }
 
 template <typename T>

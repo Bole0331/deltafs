@@ -134,8 +134,10 @@ TEST(HashWriteBufferTest, Iterator) {
     Slice value = iter->value();
     std::string s_key = key.data();
     std::string s_value = value.data();
-    assert(s_value == kv_[s_key]);
-    num += 1;
+    if (s_key != ".") {
+      assert(s_value == kv_[s_key]);
+      num += 1;
+    }
   }
   assert(num == getEntries());
 }
