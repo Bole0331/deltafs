@@ -245,6 +245,36 @@ size_t HashWriteBuffer::memory_usage() const {
   return result;
 }
 
+TableLogger::TableLogger(const DirOptions& dir_options, const HashOptions& hash_options
+  LogSink* data, LogSink* indx)
+: dir_options_(dir_options),
+  hash_options_(hash_options),
+  total_num_blocks_(0),
+  total_num_tables_(0),
+  num_tables_(0),
+  num_epochs_(0),
+  uncommitted_data_block_(0),
+  data_sink_(data),
+  indx_sink_(indx),
+  finished_(false) {
+  // Sanity checks
+  assert(indx_sink_ != NULL && data_sink_ != NULL);
+
+  indx_sink_->Ref();
+  data_sink_->Ref();
+
+  dblock_per_table_ = hash_options_.data_buffer / dir_options_.block_size;
+  if (!dir_options_.block_batch_size % dir_options_.block_size) {
+    block_batch_size_ = dir_options_.block_batch_size;
+  } else {
+    block_batch_size_ = dir_options_.block_batch_size / dir_options_.block_size;
+    block_batch_size_ *= dir_options_.block_size;
+  }
+
+  // Allocate memory
+  data_block_.reserve(block_batch_size_);
+}
+
 
 }  // namespace plfsio
 }  // namespace pdlfs
