@@ -266,6 +266,7 @@ TableLogger::TableLogger(const DirOptions& dir_options, const HashOptions& hash_
   LogSink* data, LogSink* indx)
 : dir_options_(dir_options),
   hash_options_(hash_options),
+  last_size_(0),
   total_num_blocks_(0),
   total_num_tables_(0),
   num_tables_(0),
@@ -289,6 +290,8 @@ TableLogger::TableLogger(const DirOptions& dir_options, const HashOptions& hash_
   }
   if ( block_batch_size_ == 0 ) 
     block_batch_size_ = dir_options_.block_size;
+
+  data_block_size_ = dir_options_.block_size;
   
   // Allocate memory
   data_block_.reserve(block_batch_size_);
@@ -313,75 +316,39 @@ HashTableLogger::write8bytes(size_t info) {
   status_ = indx_sink_->Lwrite(s_info);
 }
 
+void HashTableLogger::Commit() {
+  assert(!finished_);  // Finish() has not been called
+  if (!ok()) return;  // Abort
+  if (!uncommitted_data_block_) return; // skip empty commit
+
+  data_sink_->Lock();
+  const size_t base = data_sink_->Ptell();
+  status_ = data_sink_->Lwrite(data_block_);
+  data_sink_->Unlock();
+  if (!ok()) return;  // Abort
+
+  for (int i = 0; i < uncommitted_data_block_; i++) {
+    write8bytes(base);
+    base += data_block_size_;
+  }
+
+  uncommitted_data_block_ = 0;
+  last_size_ = 0;
+  data_block_.clear();
+}
+
 void HashTableLogger::Add(const Slice& key, const Slice& value) {
   assert(!finished_);       // Finish() has not been called
   assert(key.size() != 0);  // Keys cannot be empty
   if (!ok()) return;        // Abort
-
-  if (!last_key_.empty()) {
-    // Keys within a single table are inserted in a weakly sorted order
-    assert(key >= last_key_);
-    if (options_.mode == kUniqueDrop) {  // Auto deduplicate
-      if (key == last_key_) {
-        total_num_dropped_keys_++;
-        return;  // Drop
-      }
-    } else if (options_.mode != kMultiMap) {
-      assert(key != last_key_);  // Keys are strongly ordered, no duplicates
-    }
-  }
-  if (smallest_key_.empty()) {
-    smallest_key_ = key.ToString();
-  }
-  largest_key_ = key.ToString();
-
-  // Add an index entry if there is one pending insertion
-  if (pending_indx_entry_) { // Bole: EndBlock set as true
-    BytewiseComparator()->FindShortestSeparator(&last_key_, key);
-    PutLengthPrefixedSlice(&uncommitted_indexes_, last_key_);
-    pending_indx_handle_.EncodeTo(&uncommitted_indexes_);
-    pending_indx_entry_ = false;
-    num_uncommitted_indx_++;
-  }
-
-  // Commit buffered data and indexes
-  if (pending_commit_) { // Bole: Add set as true
-    Commit(); // Bole: default as 2MB
-    if (!ok()) {
-      return;
-    }
-  }
-
-  // Restart the block buffer
-  if (pending_restart_) { // Bole: Commit and EndBlock set as true
-    pending_restart_ = false;
-    data_block_.SwitchBuffer(
-        NULL);  // Continue appending to the same underlying buffer
-    // Pre-reserve enough space for the leading block handle
-    data_block_.Pad(BlockHandle::kMaxEncodedLength);
-    data_block_.Reset();
-  }
-
-  last_key_ = key.ToString();
-  output_stats_.value_size += value.size();
-  output_stats_.key_size += key.size();
-#ifndef NDEBUG
-  if (options_.mode == kUnique) {
-    assert(keys_.count(last_key_) == 0);
-    keys_.insert(last_key_);
-  }
-#endif
-
-  data_block_.Add(key, value);
-  total_num_keys_++;
-  if (data_block_.CurrentSizeEstimate() + kBlockTrailerSize +
-          BlockHandle::kMaxEncodedLength >=
-      static_cast<size_t>(options_.block_size * options_.block_util)) {
-    EndBlock();
-    // Schedule buffer commit if it is about to full
-    if (data_block_.buffer_store()->size() + options_.block_size >
-        options_.block_batch_size) {
-      pending_commit_ = true;
+  data_block_.append(key.data());
+  data_block_.append(value.data());
+  if (data_block_.size() - last_size_ >= dir_options_.block_size * dir_options_.block_util) {
+    total_num_blocks_ += 1;
+    uncommitted_data_block_ += 1;
+    last_size_ = data_block_.size();
+    if (data_block_.size() >= block_batch_size_) {
+      commit();
     }
   }
 }
@@ -419,7 +386,10 @@ void HashTableLogger::MakeEpoch() {
 Status HashTableLogger::Finish() {
   assert(!finished_);  // Finish() has not been called
   finished_ = true;
-  if (!ok()) return status_;
+  if (!ok()) {
+    return status_;
+  }
+  commit();
   for (int i = 0; i < table_per_epoch_.size(); i++) {
     write8bytes((size_t)(table_per_epoch_[i]));
   }

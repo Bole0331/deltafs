@@ -116,12 +116,6 @@ public:
  Status Finish();
 
 private:
- // 
- // Finish a 32KB (default) data block
- // End the current block and force the start of a new data block.
- // REQUIRES: Finish() has not been called.
- void EndBlock();
-
  // Flush buffered data blocks and finalize their indexes.
  // REQUIRES: Finish() has not been called.
  void Commit();
@@ -143,6 +137,8 @@ private:
  std::vector<uint16_t> table_per_epoch_; 
  size_t dblock_per_table_;
  size_t block_batch_size_;
+ size_t data_block_size_;
+ size_t last_size_;
  uint32_t total_num_blocks_;
  uint32_t total_num_tables_;
  uint32_t num_tables_;  // Number of tables generated within the current epoch
