@@ -116,6 +116,7 @@ public:
  Status Finish();
 
 private:
+ // 
  // Finish a 32KB (default) data block
  // End the current block and force the start of a new data block.
  // REQUIRES: Finish() has not been called.
@@ -136,28 +137,19 @@ private:
  HashTableLogger(const HashTableLogger&);
 
  Status status_;
- uint32_t num_uncommitted_indx_;  // Number of uncommitted index entries
- uint32_t num_uncommitted_data_;  // Number of uncommitted data blocks
- bool pending_restart_;           // Request to restart the data block buffer
- bool pending_commit_;  // Request to commit buffered data and indexes
  std::string data_block_;
- std::string indx_block_;  // Locate the data blocks within a table
- std::string meta_block_;  // Locate the tables within an epoch
- std::string root_block_;  // Locate each epoch
- bool pending_indx_entry_;
- bool pending_meta_entry_;
- bool pending_root_entry_;
- uint32_t total_num_keys_;
+ std::vector<uint16_t> table_per_epoch_; 
+ size_t bucket_size_;
+ size_t key_size_;
+ size_t value_size_;
+ size_t dblock_per_table_;
+ uint32_t total_num_epochs_;
  uint32_t total_num_blocks_;
  uint32_t total_num_tables_;
  uint32_t num_tables_;  // Number of tables generated within the current epoch
  uint32_t num_epochs_;  // Number of epochs generated
- std::string uncommitted_indexes_;
- uint64_t pending_data_flush_;  // Offset of the data pending flush
- uint64_t pending_indx_flush_;  // Offset of the index pending flush
+ uint32_t uncommitted_data_block_;
  LogSink* data_sink_;
- uint64_t data_offset_;  // Latest data offset
- LogWriter indx_logger_;
  LogSink* indx_sink_;
  bool finished_;
 };
