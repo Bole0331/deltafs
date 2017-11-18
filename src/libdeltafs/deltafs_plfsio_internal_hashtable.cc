@@ -302,7 +302,19 @@ void HashTableLogger::Add(const Slice& key, const Slice& value) {
 
 template <typename T>
 void HashTableLogger::EndTable(T* filter_block, ChunkType filter_type) {
-
+  assert(!finished_);  // Finish() has not been called
+  assert(filter_block == NULL);
+  assert(filter_type == NULL);
+  if (!ok()) {
+    return;
+  }
+  if (num_tables_ > kMaxTableNo) {
+    status_ = Status::AssertionFailed("Too many tables");
+  }
+  if (ok()) {
+    total_num_tables_ += 1;
+    num_tables_ += 1;
+  }
 }
 
 void HashTableLogger::MakeEpoch() {
