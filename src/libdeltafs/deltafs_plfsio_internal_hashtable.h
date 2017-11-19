@@ -12,13 +12,12 @@
 #include "deltafs_plfsio.h"
 #include "deltafs_plfsio_format.h"
 #include "deltafs_plfsio_log.h"
+#include "deltafs_plfsio_xio.h"
 
 #include "pdlfs-common/env_files.h"
 #include "pdlfs-common/port.h"
 
-#ifndef NDEBUG
 #include <set>
-#endif
 #include <string>
 #include <vector>
 
@@ -120,7 +119,7 @@ private:
  // REQUIRES: Finish() has not been called.
  void Commit();
 
- void write8bytes(size_t info);
+ void write8Bytes(size_t info);
 
  const DirOptions& dir_options_;
  const HashOptions& hash_options_;

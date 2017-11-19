@@ -130,12 +130,16 @@ TEST(HashWriteBufferTest, Iterator) {
   iter->SeekToFirst();
   num = 0;
   for (; iter->Valid(); iter->Next()) {
-    Slice key = iter->key();
-    Slice value = iter->value();
-    std::string s_key = key.data();
-    std::string s_value = value.data();
-    if (s_key != ".") {
-      assert(s_value == kv_[s_key]);
+    char* c_key = new char[64];
+    char* c_value = new char[64];
+    memcpy(c_key,iter->key().data(),8);
+    memcpy(c_value,iter->value().data(),32);
+    std::string key(c_key,8);
+    std::string value(c_value,32);
+    delete[] c_key;
+    delete[] c_value;
+    if (key[0] != '.') {
+      assert(value == kv_[key]);
       num += 1;
     }
   }

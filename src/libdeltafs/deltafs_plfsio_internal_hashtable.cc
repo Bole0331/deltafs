@@ -50,6 +50,7 @@ public:
       slot_per_bucket_(hash_write_buffer->slot_per_bucket_),
       key_size_(hash_write_buffer->key_size_),
       value_size_(hash_write_buffer->value_size_),
+      bucket_size_(hash_write_buffer->bucket_size_),
       buffer_(hash_write_buffer->buffer_) {}
 
   virtual ~Iter() {}
@@ -61,6 +62,7 @@ public:
       bucket_cursor_ += 1;
       return;
     } 
+    slot_cursor_ += 1;
     if (slot_cursor_ >= entries_per_bucket_[bucket_cursor_]) {
       if (entries_per_bucket_[bucket_cursor_] * (key_size_ + value_size_) < bucket_size_) {
         padding = true;
@@ -104,26 +106,30 @@ public:
     if (padding) {
       std::string key_;
       key_.resize(1,'.');
-      return key_;
+      Slice result(key_);
+      return result;
     }
     uint32_t offset = bucket_cursor_ * slot_per_bucket_ * (key_size_ + value_size_);
     offset += slot_cursor_ * (key_size_ + value_size_);
-    std::string key_ = buffer_.substr(offset,key_size_);
-    return key_;
+    const char* key_ = &buffer_[offset];
+    Slice result(key_, key_size_);
+    return result;
   }
 
   virtual Slice value() const {
     assert(Valid());
     if (padding) {
       std::string value_;
-      value.resize(bucket_size_ - entries_per_bucket_[bucket_cursor_] * (key_size_ + value_size_) - 1,'.');
-      return value_;
+      value_.resize(bucket_size_ - entries_per_bucket_[bucket_cursor_] * (key_size_ + value_size_) - 1,'.');
+      Slice result(value_);
+      return result;
     }
     uint32_t offset = bucket_cursor_ * slot_per_bucket_ * (key_size_ + value_size_);
     offset += slot_cursor_ * (key_size_ + value_size_);
     offset += key_size_;
-    std::string value_ = buffer_.substr(offset,value_size_);
-    return value_;
+    const char* value_ = &buffer_[offset];
+    Slice result(value_, value_size_);
+    return result;
   }
 
 private:
@@ -134,6 +140,7 @@ private:
   uint16_t slot_per_bucket_;
   size_t key_size_;
   size_t value_size_;
+  size_t bucket_size_;
   bool padding;
   std::string buffer_;
 };
@@ -262,7 +269,7 @@ size_t HashWriteBuffer::memory_usage() const {
   return result;
 }
 
-TableLogger::TableLogger(const DirOptions& dir_options, const HashOptions& hash_options
+HashTableLogger::HashTableLogger(const DirOptions& dir_options, const HashOptions& hash_options,
   LogSink* data, LogSink* indx)
 : dir_options_(dir_options),
   hash_options_(hash_options),
@@ -297,10 +304,10 @@ TableLogger::TableLogger(const DirOptions& dir_options, const HashOptions& hash_
   data_block_.reserve(block_batch_size_);
 
   // write meta data into index file
-  write8bytes(hash_options_.bucket_size);
-  write8bytes(hash_options_.key_size);
-  write8bytes(hash_options_.value_size);
-  write8bytes(dblock_per_table_);
+  write8Bytes(hash_options_.bucket_size);
+  write8Bytes(hash_options_.key_size);
+  write8Bytes(hash_options_.value_size);
+  write8Bytes(dblock_per_table_);
 }
 
 HashTableLogger::~HashTableLogger() {
@@ -308,10 +315,10 @@ HashTableLogger::~HashTableLogger() {
   data_sink_->Unref();
 }
 
-HashTableLogger::write8bytes(size_t info) {
+void HashTableLogger::write8Bytes(size_t info) {
   std::string s_info;
   s_info.resize(sizeof(size_t),'0');
-  std::string info2s = to_string(info);
+  std::string info2s = std::to_string(info);
   s_info.replace(sizeof(size_t)-info2s.length(),info2s.length(),info2s);
   status_ = indx_sink_->Lwrite(s_info);
 }
@@ -322,13 +329,13 @@ void HashTableLogger::Commit() {
   if (!uncommitted_data_block_) return; // skip empty commit
 
   data_sink_->Lock();
-  const size_t base = data_sink_->Ptell();
+  size_t base = data_sink_->Ptell();
   status_ = data_sink_->Lwrite(data_block_);
   data_sink_->Unlock();
   if (!ok()) return;  // Abort
 
   for (int i = 0; i < uncommitted_data_block_; i++) {
-    write8bytes(base);
+    write8Bytes(base);
     base += data_block_size_;
   }
 
@@ -348,7 +355,7 @@ void HashTableLogger::Add(const Slice& key, const Slice& value) {
     uncommitted_data_block_ += 1;
     last_size_ = data_block_.size();
     if (data_block_.size() >= block_batch_size_) {
-      commit();
+      Commit();
     }
   }
 }
@@ -380,7 +387,7 @@ void HashTableLogger::MakeEpoch() {
   }
   table_per_epoch_.push_back(num_tables_);
   num_tables_ = 0;
-  num_epoches_ += 1;
+  num_epochs_ += 1;
 }
 
 Status HashTableLogger::Finish() {
@@ -389,11 +396,11 @@ Status HashTableLogger::Finish() {
   if (!ok()) {
     return status_;
   }
-  commit();
+  Commit();
   for (int i = 0; i < table_per_epoch_.size(); i++) {
-    write8bytes((size_t)(table_per_epoch_[i]));
+    write8Bytes((size_t)(table_per_epoch_[i]));
   }
-  write8bytes((size_t)num_epochs_);
+  write8Bytes((size_t)num_epochs_);
   table_per_epoch_.clear();
   data_block_.clear();
   return status_;
